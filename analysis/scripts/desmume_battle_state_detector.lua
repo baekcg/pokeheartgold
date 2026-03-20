@@ -3,55 +3,11 @@
 -- savestate, and JSON file exchange. Higher-level battle decisions stay in
 -- Python and arrive as command.json.
 
-local function current_script_path()
-  if type(debug) ~= "table" or type(debug.getinfo) ~= "function" then
-    return nil
-  end
-  local info = debug.getinfo(1, "S")
-  if info == nil or type(info.source) ~= "string" or string.sub(info.source, 1, 1) ~= "@" then
-    return nil
-  end
-  return string.gsub(string.sub(info.source, 2), "\\", "/")
-end
-
-local function path_dirname(path)
-  if path == nil then
-    return nil
-  end
-  local dirname = string.match(path, "^(.*)/[^/]+$")
-  if dirname == nil or dirname == "" then
-    return nil
-  end
-  return dirname
-end
-
-local function path_join(base, leaf)
-  if base == nil or base == "" then
-    return leaf
-  end
-  if string.sub(base, -1) == "/" then
-    return base .. leaf
-  end
-  return base .. "/" .. leaf
-end
-
-local SCRIPT_PATH = current_script_path()
-local SCRIPT_DIR = path_dirname(SCRIPT_PATH)
-local ANALYSIS_DIR = path_dirname(SCRIPT_DIR)
-local REPO_ROOT = path_dirname(ANALYSIS_DIR)
-
-local function resolve_repo_path(relative_path)
-  if REPO_ROOT == nil then
-    return relative_path
-  end
-  return path_join(REPO_ROOT, relative_path)
-end
-
 local CONFIG = {
-  bridge_dir = resolve_repo_path("runtime/desmume"),
-  state_path = resolve_repo_path("runtime/desmume/state.json"),
-  state_tmp_path = resolve_repo_path("runtime/desmume/state.json.tmp"),
-  command_path = resolve_repo_path("runtime/desmume/command.json"),
+  bridge_dir = "runtime/desmume",
+  state_path = "runtime/desmume/state.json",
+  state_tmp_path = "runtime/desmume/state.json.tmp",
+  command_path = "runtime/desmume/command.json",
   rescan_interval_frames = 30,
   near_ctx_scan_radius = 0x20000,
   schema_version = 1,
@@ -635,6 +591,17 @@ local function shell_quote(value)
   return "'" .. string.gsub(value, "'", "'\\''") .. "'"
 end
 
+local function shell_quote_windows(value)
+  return '"' .. string.gsub(value, '"', '""') .. '"'
+end
+
+local function is_windows_host()
+  if type(package) ~= "table" or type(package.config) ~= "string" then
+    return false
+  end
+  return string.sub(package.config, 1, 1) == "\\"
+end
+
 local function ensure_bridge_dir()
   local probe = io.open(CONFIG.state_tmp_path, "w")
   if probe ~= nil then
@@ -645,7 +612,13 @@ local function ensure_bridge_dir()
   if os.execute == nil then
     return false, "os_execute_unavailable"
   end
-  local ok = os.execute("mkdir -p " .. shell_quote(CONFIG.bridge_dir))
+  local mkdir_cmd = nil
+  if is_windows_host() then
+    mkdir_cmd = "mkdir " .. shell_quote_windows(CONFIG.bridge_dir) .. " >NUL 2>NUL"
+  else
+    mkdir_cmd = "mkdir -p " .. shell_quote(CONFIG.bridge_dir)
+  end
+  local ok = os.execute(mkdir_cmd)
   if ok == true or ok == 0 then
     return true, nil
   end
@@ -664,6 +637,10 @@ local function write_text_atomic(path, tmp_path, content)
   handle:write(content)
   handle:close()
   local renamed, rename_err = os.rename(tmp_path, path)
+  if not renamed and is_windows_host() then
+    os.remove(path)
+    renamed, rename_err = os.rename(tmp_path, path)
+  end
   if not renamed then
     os.remove(tmp_path)
     return false, rename_err
