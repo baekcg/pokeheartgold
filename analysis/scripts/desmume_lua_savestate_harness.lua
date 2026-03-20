@@ -88,6 +88,18 @@ local function write_u32(addr, value)
   end
 end
 
+local function write_u16(addr, value)
+  write_log[#write_log + 1] = string.format("0x%08X=0x%04X", addr, value % 0x10000)
+  for i = 0, 1 do
+    write_byte(addr + i, math.floor(value / (0x100 ^ i)))
+  end
+end
+
+local function write_u8(addr, value)
+  write_log[#write_log + 1] = string.format("0x%08X=0x%02X", addr, value % 0x100)
+  write_byte(addr, value)
+end
+
 local function read_u16(addr)
   return read_byte(addr) + read_byte(addr + 1) * 0x100
 end
@@ -115,12 +127,20 @@ memory = {
   writedword = function(addr, value)
     write_u32(addr, value)
   end,
+  writeword = function(addr, value)
+    write_u16(addr, value)
+  end,
+  writebyte = function(addr, value)
+    write_u8(addr, value)
+  end,
 }
 
 mainmemory = {
   read_u8 = memory.readbyteunsigned,
   read_u16_le = memory.readwordunsigned,
   read_u32_le = memory.readdwordunsigned,
+  write_u8 = memory.writebyte,
+  write_u16_le = memory.writeword,
   write_u32_le = memory.writedword,
 }
 

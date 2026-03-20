@@ -38,6 +38,7 @@ local OFF_TYPE1 = 0x24
 local OFF_TYPE2 = 0x25
 local OFF_ABILITY = 0x27
 local OFF_MOVE_PP_CUR = 0x2C
+local OFF_MOVE_PP_MAX = 0x30
 local OFF_LEVEL = 0x34
 local OFF_FRIENDSHIP = 0x35
 local OFF_HP = 0x4C
@@ -204,6 +205,18 @@ local raw_write_u32 = resolve_function({
   { "mainmemory", "write_u32_le" },
 })
 
+local raw_write_u16 = resolve_function({
+  { "memory", "writeword" },
+  { "memory", "writewordunsigned" },
+  { "mainmemory", "write_u16_le" },
+})
+
+local raw_write_u8 = resolve_function({
+  { "memory", "writebyte" },
+  { "memory", "writebyteunsigned" },
+  { "mainmemory", "write_u8" },
+})
+
 local gui_text = resolve_function({
   { "gui", "text" },
   { "gui", "drawText" },
@@ -258,6 +271,60 @@ local function write_u32(addr, value)
     return false, tostring(err)
   end
   return true, nil
+end
+
+local function write_u16(addr, value)
+  if raw_write_u16 ~= nil then
+    local ok, err = pcall(raw_write_u16, addr, value)
+    if not ok then
+      return false, tostring(err)
+    end
+    return true, nil
+  end
+  if raw_write_u32 == nil then
+    return false, "memory_write_u16_unavailable"
+  end
+  local aligned = addr - (addr % 4)
+  local bytes = {
+    read_u8(aligned),
+    read_u8(aligned + 1),
+    read_u8(aligned + 2),
+    read_u8(aligned + 3),
+  }
+  local offset = addr - aligned
+  bytes[offset + 1] = value % 0x100
+  bytes[offset + 2] = math.floor(value / 0x100) % 0x100
+  local packed = bytes[1]
+    + bytes[2] * 0x100
+    + bytes[3] * 0x10000
+    + bytes[4] * 0x1000000
+  return write_u32(aligned, packed)
+end
+
+local function write_u8(addr, value)
+  if raw_write_u8 ~= nil then
+    local ok, err = pcall(raw_write_u8, addr, value)
+    if not ok then
+      return false, tostring(err)
+    end
+    return true, nil
+  end
+  if raw_write_u32 == nil then
+    return false, "memory_write_u8_unavailable"
+  end
+  local aligned = addr - (addr % 4)
+  local bytes = {
+    read_u8(aligned),
+    read_u8(aligned + 1),
+    read_u8(aligned + 2),
+    read_u8(aligned + 3),
+  }
+  bytes[(addr - aligned) + 1] = value % 0x100
+  local packed = bytes[1]
+    + bytes[2] * 0x100
+    + bytes[3] * 0x10000
+    + bytes[4] * 0x1000000
+  return write_u32(aligned, packed)
 end
 
 local function hex8(value)
@@ -1439,6 +1506,7 @@ local function maybe_start_command(command, state, phase)
     buttons = command.buttons,
     hold_frames = command.hold_frames,
     slot = command.slot,
+    placeholder_slot = nil,
     stage = "pending",
   }
 
@@ -1495,6 +1563,7 @@ local function run_select_move_command(command, state, phase)
       finalize_command(command.command_id, "failed", "no_placeholder_slot")
       return
     end
+    command.placeholder_slot = slot
     local ok, err = begin_input_queue(move_slot_input_steps(slot))
     if not ok then
       finalize_command(command.command_id, "failed", err)
@@ -1535,6 +1604,30 @@ local function run_select_move_command(command, state, phase)
       return
     end
     if phase ~= "commit_window" then
+      return
+    end
+    local slot = command.placeholder_slot
+    if slot == nil or slot < 1 or slot > 4 then
+      finalize_command(command.command_id, "failed", "missing_placeholder_slot")
+      return
+    end
+    local slot_index = slot - 1
+    local slot_move_addr = state.player.base + OFF_MOVES + slot_index * 2
+    local slot_pp_cur_addr = state.player.base + OFF_MOVE_PP_CUR + slot_index
+    local slot_pp_max_addr = state.player.base + OFF_MOVE_PP_MAX + slot_index
+    local ok0, err0 = write_u16(slot_move_addr, command.move_id)
+    if not ok0 then
+      finalize_command(command.command_id, "failed", err0)
+      return
+    end
+    local okpp1, errpp1 = write_u8(slot_pp_cur_addr, MAX_PP)
+    if not okpp1 then
+      finalize_command(command.command_id, "failed", errpp1)
+      return
+    end
+    local okpp2, errpp2 = write_u8(slot_pp_max_addr, MAX_PP)
+    if not okpp2 then
+      finalize_command(command.command_id, "failed", errpp2)
       return
     end
     local ok1, err1 = write_u32(state.ctx + OFFSET_MOVE_NO_TEMP, command.move_id)
