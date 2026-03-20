@@ -3,11 +3,55 @@
 -- savestate, and JSON file exchange. Higher-level battle decisions stay in
 -- Python and arrive as command.json.
 
+local function current_script_path()
+  if type(debug) ~= "table" or type(debug.getinfo) ~= "function" then
+    return nil
+  end
+  local info = debug.getinfo(1, "S")
+  if info == nil or type(info.source) ~= "string" or string.sub(info.source, 1, 1) ~= "@" then
+    return nil
+  end
+  return string.gsub(string.sub(info.source, 2), "\\", "/")
+end
+
+local function path_dirname(path)
+  if path == nil then
+    return nil
+  end
+  local dirname = string.match(path, "^(.*)/[^/]+$")
+  if dirname == nil or dirname == "" then
+    return nil
+  end
+  return dirname
+end
+
+local function path_join(base, leaf)
+  if base == nil or base == "" then
+    return leaf
+  end
+  if string.sub(base, -1) == "/" then
+    return base .. leaf
+  end
+  return base .. "/" .. leaf
+end
+
+local SCRIPT_PATH = current_script_path()
+local SCRIPT_DIR = path_dirname(SCRIPT_PATH)
+local ANALYSIS_DIR = path_dirname(SCRIPT_DIR)
+local REPO_ROOT = path_dirname(ANALYSIS_DIR)
+
+local function resolve_repo_path(relative_path)
+  if REPO_ROOT == nil then
+    return relative_path
+  end
+  return path_join(REPO_ROOT, relative_path)
+end
+
 local CONFIG = {
-  bridge_dir = "runtime/desmume",
-  state_path = "runtime/desmume/state.json",
-  state_tmp_path = "runtime/desmume/state.json.tmp",
-  command_path = "runtime/desmume/command.json",
+  bridge_dir = resolve_repo_path("runtime/desmume"),
+  state_path = resolve_repo_path("runtime/desmume/state.json"),
+  state_tmp_path = resolve_repo_path("runtime/desmume/state.json.tmp"),
+  command_path = resolve_repo_path("runtime/desmume/command.json"),
   rescan_interval_frames = 30,
   near_ctx_scan_radius = 0x20000,
   schema_version = 1,
